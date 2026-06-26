@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o webserver ./cmd/webserver
+          GOOS=linux GOARCH=arm64 go build -o metrics ./cmd/metrics
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.PI_TAILSCALE_IP }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy binaries
+        run: |
+          scp -i ~/.ssh/deploy_key webserver metrics \
+            "${{ secrets.SSH_USER }}@${{ secrets.PI_TAILSCALE_IP }}:/opt/pi-portfolio-server/"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.PI_TAILSCALE_IP }}" \
+            "chmod +x /opt/pi-portfolio-server/webserver /opt/pi-portfolio-server/metrics && sudo systemctl restart pi-webserver pi-metrics"

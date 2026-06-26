@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -19,22 +20,74 @@ func openDatabase(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	_, err = db.ExecContext(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS health_checks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			success BOOLEAN NOT NULL,
+			response_time_ms INTEGER,
+			timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 // Handler for returning page stats (eg. page visits)
 func statsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var count int
+		var count, total, successes int
 		err := db.QueryRow("SELECT COUNT(*) FROM visits").Scan(&count)
 		if err != nil {
-			http.Error(w, "Failed to load stats", http.StatusInternalServerError)
+			http.Error(w, "Failed to load visits", http.StatusInternalServerError)
 			return
 		}
+		err = db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) FROM health_checks`).Scan(&total, &successes)
+		if err != nil {
+			http.Error(w, "Failed to load uptime", http.StatusInternalServerError)
+			return
+		}
+
+		var uptimePercent float64
+		if total > 0 {
+			uptimePercent = float64(successes) / float64(total) * 100
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprintf(w, `{"total_requests": %d}`, count); err != nil {
+		if _, err := fmt.Fprintf(w, `{"total_requests": %d, "uptime_percent": %.2f}`, count, uptimePercent); err != nil {
 			log.Println("failed to write response:", err)
 		}
+	}
+}
+
+// checkHealth records a single uptime probe; success requires a 200 response.
+func checkHealth(db *sql.DB, url string) {
+	start := time.Now()
+	resp, err := http.Get(url)
+	elapsed := time.Since(start).Milliseconds()
+
+	success := err == nil && resp.StatusCode == http.StatusOK
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+
+	_, dbErr := db.Exec(
+		`INSERT INTO health_checks (success, response_time_ms) VALUES (?, ?)`,
+		success, elapsed,
+	)
+	if dbErr != nil {
+		log.Println("failed to record health check:", dbErr)
+	}
+}
+
+// runHealthChecks blocks, probing targetURL on each tick — call with go.
+func runHealthChecks(db *sql.DB, targetURL string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		checkHealth(db, targetURL)
 	}
 }
 
@@ -49,5 +102,7 @@ func main() {
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
+
+	go runHealthChecks(db, "http://localhost:8080/", 1*time.Minute)
 	log.Fatal(srv.ListenAndServe())
 }

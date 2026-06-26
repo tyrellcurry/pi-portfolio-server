@@ -1,7 +1,4 @@
-/*
- Package main runs the metrics service, which polls the webserver for uptime and exposes aggregate traffic stats over HTTP.
-*/
-
+// Package main runs the metrics service, which polls the webserver for uptime and exposes aggregate traffic stats over HTTP.
 package main
 
 import (
@@ -25,6 +22,7 @@ func openDatabase(dbPath string) error {
 	return nil
 }
 
+// Handler for returning page stats (eg. page visits)
 func statsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var count int

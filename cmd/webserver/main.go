@@ -1,3 +1,4 @@
+// Package main runs the webserver service, which serves a static HTML site, creates a DB table and inserts page visits into it.
 package main
 
 import (
@@ -36,6 +37,7 @@ func initDatabase(dbPath string) error {
 	return nil
 }
 
+// Middleware that inserts page visits into the visits table
 func loggingMiddleware(next http.Handler, db *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := db.Exec(`INSERT INTO visits (path) VALUES (?)`, r.URL.Path)
@@ -47,9 +49,10 @@ func loggingMiddleware(next http.Handler, db *sql.DB) http.Handler {
 }
 
 func main() {
-	if err := initDatabase("data/portfolio.db"); err != nil {
+	if err := initDatabase("data/portfolio.db?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"); err != nil {
 		log.Fatal(err)
 	}
+	// @TODO: replace with real site files
 	fileServer := http.FileServer(http.Dir("./static"))
 	http.Handle("/", loggingMiddleware(fileServer, db))
 	log.Println("Starting server on :8080")

@@ -36,6 +36,12 @@ jobs:
       - name: Deploy binaries
         run: |
           scp -i ~/.ssh/deploy_key webserver metrics \
-            "${{ secrets.SSH_USER }}@${{ secrets.PI_TAILSCALE_IP }}:/opt/pi-portfolio-server/"
-          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.PI_TAILSCALE_IP }}" \
-            "chmod +x /opt/pi-portfolio-server/webserver /opt/pi-portfolio-server/metrics && sudo systemctl restart pi-webserver pi-metrics"
+            "${{ secrets.SSH_USER }}@${{ secrets.PI_TAILSCALE_IP }}:/opt/pi-portfolio-server/.deploy-tmp/"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.PI_TAILSCALE_IP }}" '
+            set -e
+            cd /opt/pi-portfolio-server
+            chmod +x .deploy-tmp/webserver .deploy-tmp/metrics
+            mv .deploy-tmp/webserver webserver
+            mv .deploy-tmp/metrics metrics
+            sudo systemctl restart pi-webserver pi-metrics
+          '

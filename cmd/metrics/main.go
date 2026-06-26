@@ -95,7 +95,7 @@ func main() {
 	if err := openDatabase("data/portfolio.db?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"); err != nil {
 		log.Fatal(err)
 	}
-	http.Handle("/stats", statsHandler(db))
+	http.Handle("/api/stats", statsHandler(db))
 	log.Println("Starting server on :8081")
 	srv := &http.Server{
 		Addr:         ":8081",

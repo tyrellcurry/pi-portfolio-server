@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -25,9 +26,10 @@ func initDatabase(dbPath string) error {
 	}
 	_, err = db.ExecContext(
 		context.Background(),
-		`CREATE TABLE IF NOT EXISTS visits (
+		`CREATE TABLE IF NOT EXISTS requests (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			path TEXT NOT NULL,
+			is_page_view BOOLEAN NOT NULL,
 			timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 	)
@@ -37,12 +39,15 @@ func initDatabase(dbPath string) error {
 	return nil
 }
 
-// Middleware that inserts page visits into the visits table
+// Middleware that inserts each request into the requests table
 func loggingMiddleware(next http.Handler, db *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, err := db.Exec(`INSERT INTO visits (path) VALUES (?)`, r.URL.Path)
+		ext := path.Ext(r.URL.Path)
+		isPageView := ext == "" || ext == ".html"
+
+		_, err := db.Exec(`INSERT INTO requests (path, is_page_view) VALUES (?, ?)`, r.URL.Path, isPageView)
 		if err != nil {
-			log.Println("failed to insert visit:", err)
+			log.Println("failed to insert request:", err)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -52,7 +57,6 @@ func main() {
 	if err := initDatabase("data/portfolio.db?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON"); err != nil {
 		log.Fatal(err)
 	}
-	// @TODO: replace with real site files
 	fileServer := http.FileServer(http.Dir("./static"))
 	http.Handle("/", loggingMiddleware(fileServer, db))
 	log.Println("Starting server on :8080")

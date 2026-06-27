@@ -35,28 +35,32 @@ func openDatabase(dbPath string) error {
 	return nil
 }
 
-// Handler for returning page stats (eg. page visits)
+// Handler for returning aggregate stats: total requests, total page visits, and uptime percentage.
 func statsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var count, total, successes int
-		err := db.QueryRow("SELECT COUNT(*) FROM visits").Scan(&count)
+		var totalRequests, totalVisits int
+		err := db.QueryRow(
+			`SELECT COUNT(*), COALESCE(SUM(CASE WHEN is_page_view THEN 1 ELSE 0 END), 0) FROM requests`,
+		).Scan(&totalRequests, &totalVisits)
 		if err != nil {
-			http.Error(w, "Failed to load visits", http.StatusInternalServerError)
+			http.Error(w, "Failed to load requests", http.StatusInternalServerError)
 			return
 		}
-		err = db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) FROM health_checks`).Scan(&total, &successes)
+
+		var totalChecks, successfulChecks int
+		err = db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) FROM health_checks`).Scan(&totalChecks, &successfulChecks)
 		if err != nil {
 			http.Error(w, "Failed to load uptime", http.StatusInternalServerError)
 			return
 		}
 
 		var uptimePercent float64
-		if total > 0 {
-			uptimePercent = float64(successes) / float64(total) * 100
+		if totalChecks > 0 {
+			uptimePercent = float64(successfulChecks) / float64(totalChecks) * 100
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprintf(w, `{"total_requests": %d, "uptime_percent": %.2f}`, count, uptimePercent); err != nil {
+		if _, err := fmt.Fprintf(w, `{"total_requests": %d, "total_visits": %d, "uptime_percent": %.2f}`, totalRequests, totalVisits, uptimePercent); err != nil {
 			log.Println("failed to write response:", err)
 		}
 	}

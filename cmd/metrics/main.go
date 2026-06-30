@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -66,6 +67,47 @@ func statsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+type dailyRequestStat struct {
+	Date          string `json:"date"`
+	TotalRequests int    `json:"total_requests"`
+	TotalVisits   int    `json:"total_visits"`
+}
+
+// Handler for returning daily request and visit counts for the last 7 days.
+func weeklyRequestsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.Query(`
+			SELECT date(timestamp),
+				COUNT(*),
+				COALESCE(SUM(CASE WHEN is_page_view THEN 1 ELSE 0 END), 0)
+			FROM requests
+			WHERE timestamp >= date('now', '-7 days')
+			GROUP BY date(timestamp)
+			ORDER BY date(timestamp) ASC
+		`)
+		if err != nil {
+			http.Error(w, "Failed to load weekly requests", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		stats := []dailyRequestStat{}
+		for rows.Next() {
+			var s dailyRequestStat
+			if err := rows.Scan(&s.Date, &s.TotalRequests, &s.TotalVisits); err != nil {
+				http.Error(w, "Failed to scan weekly requests", http.StatusInternalServerError)
+				return
+			}
+			stats = append(stats, s)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(stats); err != nil {
+			log.Println("failed to write response:", err)
+		}
+	}
+}
+
 // checkHealth records a single uptime probe; success requires a 200 response.
 func checkHealth(db *sql.DB, url string) {
 	start := time.Now()
@@ -100,6 +142,7 @@ func main() {
 		log.Fatal(err)
 	}
 	http.Handle("/api/stats", statsHandler(db))
+	http.Handle("/api/requests/weekly", weeklyRequestsHandler(db))
 	log.Println("Starting server on :8081")
 	srv := &http.Server{
 		Addr:         ":8081",

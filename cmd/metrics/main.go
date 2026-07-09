@@ -48,16 +48,30 @@ func statsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var totalChecks, successfulChecks int
-		err = db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) FROM health_checks`).Scan(&totalChecks, &successfulChecks)
+		// Uptime is windowed to the current calendar week (Monday start) so a bad
+		// week doesn't drag down future weeks. The denominator is the number of
+		// hourly pings expected so far this week (not just rows actually recorded),
+		// so a gap where the server itself was down - and no ping could even be
+		// attempted - counts against uptime instead of silently vanishing.
+		var successfulChecks, expectedPings int
+		err = db.QueryRow(`
+			SELECT
+				COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0),
+				CAST((julianday('now') - julianday(date('now', 'weekday 0', '-6 days'))) * 24 AS INTEGER)
+			FROM health_checks
+			WHERE timestamp >= date('now', 'weekday 0', '-6 days')
+		`).Scan(&successfulChecks, &expectedPings)
 		if err != nil {
 			http.Error(w, "Failed to load uptime", http.StatusInternalServerError)
 			return
 		}
 
-		var uptimePercent float64
-		if totalChecks > 0 {
-			uptimePercent = float64(successfulChecks) / float64(totalChecks) * 100
+		uptimePercent := 100.0
+		if expectedPings > 0 {
+			uptimePercent = float64(successfulChecks) / float64(expectedPings) * 100
+			if uptimePercent > 100 {
+				uptimePercent = 100
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -150,6 +164,6 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	go runHealthChecks(db, "http://localhost:8080/", 1*time.Minute)
+	go runHealthChecks(db, "http://localhost:8080/", 1*time.Hour)
 	log.Fatal(srv.ListenAndServe())
 }
